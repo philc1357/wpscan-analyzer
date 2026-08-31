@@ -1,10 +1,8 @@
 import os
-import subprocess
 import json
 import requests
 from dotenv import load_dotenv
 import time
-import re
 from datetime import datetime
 
 # API-Key aus .env laden
@@ -12,112 +10,51 @@ load_dotenv(override=True)
 api_key = os.getenv("OPENROUTER_API_KEY")
 wpscan_api_token = os.getenv("WPScan_API_Token", "")
 
-# Benutzer wird aufgefordert, die Domain einzugeben
-domain = input("Domain: ").strip()
+# Benutzer wird aufgefordert, den Dateinamen der JSON-Datei einzugeben
+print("📂 Bitte geben Sie den Pfad zur WPScan JSON-Datei ein:")
+print("   (z.B. wpscan_scan.json oder /pfad/zu/datei.json)")
+json_file_path = input("Dateipfad: ").strip()
 
-# Domain-Validierung (einfache Prüfung)
-if not domain or not domain.replace('.', '').replace('-', '').isalnum():
-    print("❌ Ungültige Domain.")
+# Prüfen ob die Datei existiert
+if not os.path.exists(json_file_path):
+    print(f"❌ Datei nicht gefunden: {json_file_path}")
+    print("   Bitte stellen Sie sicher, dass der Pfad korrekt ist.")
     exit(1)
 
-# WPScan-Befehl vorbereiten mit optimierten Optionen
-print(f"🔍 Führe WPScan gegen {domain} durch...")
-print("   (Dies kann einige Minuten dauern...)")
+# Prüfen ob es eine JSON-Datei ist
+if not json_file_path.lower().endswith('.json'):
+    print("⚠️  Warnung: Die Datei hat keine .json-Endung. Es wird trotzdem versucht, sie zu laden.")
 
-# Basis-Befehl
-wpscan_cmd = [
-    "wpscan",
-    "--url", domain,
-    "-e", "u,vt,vp",  # Benutzer, verletzliche Themes, verletzliche Plugins
-    "--random-user-agent",
-    "--plugins-detection", "aggressive",
-    "--format", "json"
-]
+print(f"\n📂 Lade JSON-Datei: {json_file_path}")
 
-# Zusätzliche Optionen für bessere Ergebnisse
-if wpscan_api_token:
-    wpscan_cmd.extend(["--api-token", wpscan_api_token])
-    print("   ✅ WPScan API Token geladen")
-else:
-    print("   ⚠️  Kein WPScan API Token - Schwachstellendaten werden nicht angezeigt")
-    print("   💡 Registrierung: https://wpscan.com/register")
-
-# Anti-False-Positive Maßnahmen
-wpscan_cmd.extend([
-    "--exclude-content-based", '""',
-    "--detection-mode", "aggressive",
-    "--throttle", "1000"  # Verlangsamt den Scan für bessere Stabilität
-])
-
+# JSON-Datei laden
 try:
-    # WPScan ausführen - allow non-zero exit codes
-    result = subprocess.run(
-        wpscan_cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=1200  # 20 Minuten Timeout
-    )
+    with open(json_file_path, 'r', encoding='utf-8') as f:
+        scan_data = json.load(f)
+    print("✅ JSON-Datei erfolgreich geladen")
     
-    # JSON-Ausgabe parsen
-    scan_data = None
-    
-    # Zuerst stderr versuchen (WPScan gibt JSON oft auf stderr aus)
-    try:
-        if result.stderr and result.stderr.strip():
-            scan_data = json.loads(result.stderr)
-            print("✅ JSON-Daten aus stderr geparst")
-    except json.JSONDecodeError:
-        pass
-    
-    # Wenn stderr fehlschlägt, stdout versuchen
-    if scan_data is None:
-        try:
-            if result.stdout and result.stdout.strip():
-                scan_data = json.loads(result.stdout)
-                print("✅ JSON-Daten aus stdout geparst")
-        except json.JSONDecodeError:
-            pass
-    
-    # Wenn beides fehlschlägt, Fehler anzeigen
-    if scan_data is None:
-        print("❌ Keine gültigen JSON-Daten gefunden")
-        print("stdout (erste 500 Zeichen):")
-        print(result.stdout[:500] if result.stdout else "(leer)")
-        print("stderr (erste 500 Zeichen):")
-        print(result.stderr[:500] if result.stderr else "(leer)")
-        exit(1)
-    
-    # Prüfen ob der Scan abgebrochen wurde
-    if scan_data.get("scan_aborted"):
-        print(f"⚠️  WPScan-Scan wurde abgebrochen: {scan_data['scan_aborted']}")
-        print("   Das Script versucht trotzdem die vorhandenen Daten zu analysieren.")
+    # Prüfen ob es sich um WPScan-Daten handelt
+    if "version" not in scan_data and "plugins" not in scan_data and "main_theme" not in scan_data:
+        print("⚠️  Warnung: Die Datei scheint keine typischen WPScan-Daten zu enthalten.")
+        print("   Es wird trotzdem versucht, die Daten zu analysieren.")
         
-        # Extrahiere die Anzahl der gefundenen Plugins für Debugging
-        if "plugins" in scan_data:
-            plugin_count = len(scan_data.get("plugins", {}))
-            print(f"   📊 {plugin_count} Plugins gefunden (möglicherweise viele False Positives)")
-    
-    elif result.returncode != 0:
-        print(f"⚠️  WPScan beendet mit Exit-Code {result.returncode}, aber Daten wurden trotzdem erfasst.")
-    
-    print("✅ WPScan Daten erfolgreich erfasst")
-    
-except subprocess.TimeoutExpired:
-    print("❌ WPScan-Scan hat das Zeitlimit von 20 Minuten überschritten")
-    exit(1)
 except json.JSONDecodeError as e:
-    print(f"❌ Fehler beim Parsen der JSON-Ausgabe: {e}")
-    exit(1)
-except FileNotFoundError:
-    print("❌ WPScan nicht gefunden. Bitte installieren Sie WPScan:")
-    print("   sudo apt install wpscan")
-    print("   oder")
-    print("   gem install wpscan")
+    print(f"❌ Fehler beim Parsen der JSON-Datei: {e}")
+    print("   Bitte stellen Sie sicher, dass es sich um eine gültige JSON-Datei handelt.")
     exit(1)
 except Exception as e:
-    print(f"❌ Unerwarteter Fehler: {e}")
+    print(f"❌ Fehler beim Laden der Datei: {e}")
     exit(1)
+
+# Extrahiere Domain aus den Daten (falls vorhanden)
+domain = "unbekannte-domain"
+if "url" in scan_data:
+    # Extrahiere Domain aus URL
+    url = scan_data["url"]
+    if url.startswith("http"):
+        domain = url.split("//")[1].split("/")[0]
+    else:
+        domain = url.split("/")[0]
 
 # Funktion zum Extrahieren von CVEs aus den Scan-Daten (lokale Extraktion)
 def extract_cves_from_scan(scan_data):
@@ -257,6 +194,9 @@ if wpscan_api_token and all_cve_ids:
     print(f"\n🔍 Rufe zusätzliche CVE-Details von NVD API ab ({len(all_cve_ids)} CVEs)...")
     additional_cves = fetch_additional_cve_details(list(all_cve_ids))
     print(f"✅ {len(additional_cves)} zusätzliche CVE-Details abgerufen")
+elif not wpscan_api_token:
+    print("\n⚠️  Kein WPScan API Token - Schwachstellendaten werden nur aus der JSON-Datei angezeigt")
+    print("   💡 Registrierung für API-Token: https://wpscan.com/register")
 
 # JSON-Daten für die Analyse vorbereiten
 scan_json = json.dumps(scan_data, indent=2, ensure_ascii=False)
@@ -412,14 +352,14 @@ Liste aller gefundenen CVEs mit:
 - Beschreibung
 - Quelle (WPScan oder NVD)
 
-# WPScan-Ergebnisse:
+# WPScan-Ergebnisse (aus JSON-Datei: {os.path.basename(json_file_path)}):
 {scan_json}
 
 {cve_list_formatted}
 """
 
 # API-Anfrage an OpenRouter
-print("🤖 Analysiere Schwachstellen mit KI...")
+print("\n🤖 Analysiere Schwachstellen mit KI...")
 try:
     response = requests.post(
         url="https://openrouter.ai/api/v1/chat/completions",
@@ -458,12 +398,18 @@ except Exception as e:
     print(f"❌ Fehler bei der KI-Analyse: {e}")
     exit(1)
 
-# Ausgabe speichern
+# Ausgabe speichern - Kombinierte Datei mit KI-Analyse und rohen WPScan-Daten
 output_filename = f"wpscan_analysis_{domain.replace('.', '_')}.md"
 with open(output_filename, "w", encoding="utf-8") as f:
+    # Zuerst die KI-Analyse
     f.write(security_analysis)
+    f.write("\n\n---\n\n")
+    f.write("# ANHANG: ROHER WPScan-SCAN\n\n")
+    f.write("```json\n")
+    f.write(scan_json)
+    f.write("\n```\n")
 
-# Zusätzlich: Rohdaten speichern
+# Zusätzlich: Rohdaten separat speichern
 raw_output = f"wpscan_raw_{domain.replace('.', '_')}.json"
 with open(raw_output, "w", encoding="utf-8") as f:
     json.dump(scan_data, f, indent=2, ensure_ascii=False)
@@ -476,12 +422,13 @@ with open(cve_summary, "w", encoding="utf-8") as f:
         'local_cves': local_cves,
         'additional_cves': additional_cves,
         'scan_date': datetime.now().isoformat(),
-        'domain': domain
+        'domain': domain,
+        'source_file': json_file_path
     }, f, indent=2, ensure_ascii=False)
 
 print(f"\n✅ Schwachstellenanalyse erfolgreich erstellt:")
-print(f"📄 Bericht: {os.path.abspath(output_filename)}")
-print(f"📊 Rohdaten: {os.path.abspath(raw_output)}")
+print(f"📄 Bericht (mit rohen WPScan-Daten): {os.path.abspath(output_filename)}")
+print(f"📊 Rohdaten (separat): {os.path.abspath(raw_output)}")
 print(f"📋 CVE-Zusammenfassung: {os.path.abspath(cve_summary)}")
 
 # Detaillierte Konsolenausgabe mit CVEs
@@ -598,4 +545,5 @@ except Exception as e:
 
 print("\n" + "="*60)
 print("📄 Vollständiger Bericht in der Markdown-Datei verfügbar")
+print("   (KI-Analyse + rohe WPScan-Daten)")
 print("="*60)
